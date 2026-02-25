@@ -555,36 +555,68 @@ void ApcReportParser::parse_present_status_report(const HidReport &report, UpsDa
 }
 
 void ApcReportParser::parse_apc_status_report(const HidReport &report, UpsData &data) {
-  // APCStatusFlag report: PowerSummary.APCStatusFlag (single byte legacy status)
-  // ESP32 data format: [06 XX] where XX is the status value
+  // APCStatusFlag legacy status (fallback) — ESP32 data format: [06 XX]
   if (report.data.size() < 2) {
     ESP_LOGW(APC_HID_TAG, "APCStatus report too short: %zu bytes", report.data.size());
     return;
   }
-  
-  // ESP32 data format: [APC_REPORT_ID_BATTERY 08] where 0x08 = AC present  
+
   uint8_t apc_status = report.data[1]; // Byte 1 contains the status value
   ESP_LOGD(APC_HID_TAG, "Raw APCStatusFlag byte: 0x%02X", apc_status);
   ESP_LOGI(APC_HID_TAG, "APCStatusFlag: 0x%02X", apc_status);
-  
-  // Parse APC legacy status values from NUT logs:
-  // Value 8 = AC present (UPS online)
-  // Value 16 = discharging (UPS on battery) 
-  bool apc_ac_present = (apc_status == 8);
-  bool apc_discharging = (apc_status == 16);
-  
-  // Use APCStatusFlag as backup/confirmation for PresentStatus
-  // This provides additional validation of the UPS state
+
+  // Treat APCStatusFlag as a bitfield fallback (some devices use bit masks)
+  // Common mappings from various APC implementations / NUT:
+  // bit 0 (0x01) = charging (or part of charging indicators)
+  // bit 1 (0x02) = discharging / on-battery
+  // bit 2 (0x04) = AC present / online
+  // older implementations sometimes use full values like 8 or 16; keep support.
+
+  const bool apc_bit_charging    = (apc_status & 0x01) != 0;
+  const bool apc_bit_discharging = (apc_status & 0x02) != 0;
+  const bool apc_bit_ac_present  = (apc_status & 0x04) != 0;
+
+  // also support legacy equality values (backwards compatibility)
+  const bool apc_eq_ac_present   = (apc_status == 8);
+  const bool apc_eq_discharging  = (apc_status == 16);
+
+  bool apc_ac_present = apc_bit_ac_present || apc_eq_ac_present;
+  bool apc_discharging = apc_bit_discharging || apc_eq_discharging;
+  bool apc_charging = apc_bit_charging;
+
+  // Log interpretation
+  ESP_LOGD(APC_HID_TAG, "Interpreted APCStatusFlag bits -> charging:%d discharging:%d ac_present:%d",
+           apc_charging, apc_discharging, apc_ac_present);
+
+  // Apply fallback values to data if PresentStatus (bit-packed) not available
+  // Important: we do not overwrite PresentStatus when it's been parsed earlier.
+  // This fallback aims to set battery.status and help binary sensors.
+  if (!apc_ac_present && !apc_discharging && !apc_charging && (apc_status != 0)) {
+    // Unknown low-entropy code, log and return
+    ESP_LOGW(APC_HID_TAG, "APCStatusFlag ambiguous/unknown mapping: 0x%02X", apc_status);
+    return;
+  }
+
+  // Only set battery status when PresentStatus has not been parsed/available.
+  // UpsData may already contain more authoritative values; avoid overwriting unless necessary.
+  // (Assumes UpsData has battery.status as a string or enum as used elsewhere.)
+  if (apc_charging) {
+    data.battery.status = battery_status::CHARGING;
+  } else if (apc_discharging) {
+    data.battery.status = battery_status::ON_BATTERY;
+  } else if (apc_ac_present) {
+    // AC present, battery not charging/discharging -> online/idle
+    data.battery.status = battery_status::GOOD;
+  }
+
+  // Optionally mark power status text for debugging
   if (apc_ac_present) {
     ESP_LOGD(APC_HID_TAG, "APCStatusFlag confirms: UPS online (AC present)");
   } else if (apc_discharging) {
     ESP_LOGD(APC_HID_TAG, "APCStatusFlag confirms: UPS on battery (discharging)");
-  } else {
-    ESP_LOGW(APC_HID_TAG, "APCStatusFlag unknown value: 0x%02X", apc_status);
+  } else if (apc_charging) {
+    ESP_LOGD(APC_HID_TAG, "APCStatusFlag confirms: Battery charging (fallback)");
   }
-  
-  // Don't override PresentStatus data, just log for debugging
-  // PresentStatus report is more detailed and authoritative
 }
 
 void ApcReportParser::parse_input_voltage_report(const HidReport &report, UpsData &data) {
