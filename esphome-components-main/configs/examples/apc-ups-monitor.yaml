@@ -1,0 +1,136 @@
+# Example: APC Back-UPS ES 700 Configuration
+# Complete production configuration for APC UPS with European defaults
+# Copy and customize this file for your APC device
+
+substitutions:
+  name: "apc-ups-monitor"
+  friendly_name: "Office APC UPS"
+  simulation_mode: "false"        # Set to "true" for testing without hardware
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  comment: "APC Back-UPS ES 700 Monitor with European defaults"
+
+# Use modular configuration packages
+packages:
+  # Regional defaults (European voltage/frequency standards)
+  regional_defaults: !include ../regional/european_base.yaml
+  
+  # OPTIONAL: Entity grouping (improves web interface organization)
+  # Uncomment to enable organized entity groups in ESPHome web interface
+  entity_groups: !include ../entity_groups.yaml
+  
+  # Core functionality with LED status indication
+  base_with_led: !include ../base_ups_with_led.yaml
+  
+  # Choose EITHER grouped OR standard sensor packages (not both):
+  # Standard packages (current default):
+  essential: !include ../essential_sensors.yaml
+  extended: !include ../extended_sensors.yaml  # Optional
+  timers: !include ../timer_sensors.yaml
+  controls: !include ../ups_controls.yaml
+  
+  # OR grouped packages (better organization):
+  # essential_grouped: !include ../essential_sensors_grouped.yaml
+  # extended_grouped: !include ../extended_sensors_grouped.yaml
+  # timers_grouped: !include ../timer_sensors_grouped.yaml
+  # controls_grouped: !include ../ups_controls_grouped.yaml
+  
+  # Delay configuration (Shutdown/Start/Reboot timers)
+  delay_config: !include ../delay_config.yaml
+  
+  # APC-specific optimizations
+  apc_device: !include ../device_types/apc_backups_es.yaml
+  
+  # NUT Server (Network UPS Tools) - uncomment to enable TCP server
+  # Exposes UPS data via standard NUT protocol for monitoring tools
+  # Standard package:
+  nut_server: !include ../nut_server.yaml
+  # OR grouped package (with NUT Server group in web interface):
+  # nut_server_grouped: !include ../nut_server_grouped.yaml
+
+# Optional: Home Assistant API (uncomment to enable)
+# api:
+#   encryption:
+#     key: "your_32_character_encryption_key_here=="
+
+# Optional: Notification automation examples
+script:
+  - id: power_outage_alert
+    then:
+      - logger.log:
+          format: "POWER OUTAGE DETECTED - Battery at %.1f%%, Runtime: %.1f minutes"
+          args:
+            - "id(battery_level).state" 
+            - "id(runtime_remaining).state"
+          level: WARN
+      # Add your notification logic here (e.g., Home Assistant service call)
+      
+  - id: power_restored_alert  
+    then:
+      - logger.log:
+          format: "POWER RESTORED - UPS back online"
+          level: INFO
+      # Add your notification logic here
+
+  - id: timer_countdown_alert
+    then:
+      - logger.log:
+          format: "TIMER COUNTDOWN - Shutdown: %.0fs, Start: %.0fs, Reboot: %.0fs (Active: %.0f, Fast Poll: %.0f)"
+          args:
+            - "id(ups_timer_shutdown).state"
+            - "id(ups_timer_start).state"
+            - "id(ups_timer_reboot).state"
+            - "id(active_timer_count).state"
+            - "id(fast_polling_status).state"
+          level: INFO
+      # Add critical countdown automation here (e.g., server shutdown at 30s)
+
+  - id: shutdown_warning_alert
+    then:
+      - if:
+          condition:
+            # Timer is actively counting down and less than 60 seconds
+            lambda: |-
+              float timer = id(ups_timer_shutdown).state;
+              return (!std::isnan(timer) && timer > 0 && timer < 60);
+          then:
+            - logger.log:
+                format: "CRITICAL: APC UPS SHUTTING DOWN IN %.0f SECONDS!"
+                args:
+                  - "id(ups_timer_shutdown).state"
+                level: ERROR
+            # Add emergency server shutdown logic here
+
+# Enhanced monitoring for APC timer functionality
+interval:
+  # Monitor timer status every 15 seconds (component handles fast polling automatically)
+  - interval: 15s
+    then:
+      - script.execute: timer_countdown_alert
+      - script.execute: shutdown_warning_alert
+
+# Expected Timer Behavior:
+# Normal Operation:
+# - ups_timer_shutdown: -1 (APC default inactive state)
+# - ups_timer_start: -1 (APC reboot timer inactive)  
+# - ups_timer_reboot: -1 (same as shutdown)
+# - active_timer_count: 0
+# - fast_polling_status: 0
+# - Component polls every 15 seconds (from device config)
+
+# During UPS Shutdown:
+# - ups_timer_shutdown: 20→19→18→17... (LIVE COUNTDOWN!)
+# - Component automatically switches to 2-second polling
+# - active_timer_count: 1
+# - fast_polling_status: 1
+# - Critical alerts trigger for emergency server shutdown
+
+# During UPS Startup:
+# - ups_timer_start: similar countdown behavior
+# - Component uses 2-second fast polling
+# - Coordination for sequential server startup
+
+# Custom automations would be handled in Home Assistant
+# The timer sensors enable sophisticated countdown-based automation

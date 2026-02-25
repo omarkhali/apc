@@ -1,0 +1,97 @@
+# Base UPS Configuration Package
+# Common settings for all UPS HID devices
+# Use with: packages: !include configs/base_ups.yaml
+
+# Substitutions with sensible defaults
+substitutions:
+  # Device identification
+  friendly_name: "${name}"
+  device_description: "UPS Monitor with ESP32-S3"
+  
+  # UPS configuration
+  update_interval: "10s"
+  protocol_timeout: "15s"
+  simulation_mode: "false"
+  
+  # LED status pin (default for ESP32-S3-DevKitC-1)
+  led_pin: "GPIO48"
+  
+  # Logging level
+  log_level: "DEBUG"
+
+# Core ESP32 configuration
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# Logging configuration
+logger:
+  level: ${log_level}
+  baud_rate: 115200
+  hardware_uart: UART0
+  logs:
+    ups_hid: INFO
+    nut_server: DEBUG
+
+
+# Network configuration
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: !secret wifi_dns_domain
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# OTA updates
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Web server for diagnostics
+web_server:
+  port: 80
+
+# External components
+external_components:
+  - source:
+      type: local
+      path: ../../components
+
+# Enable number component for delay configuration
+number:
+
+# Main UPS HID Component
+ups_hid:
+  id: ups_monitor
+  update_interval: ${update_interval}
+  protocol_timeout: ${protocol_timeout}
+  protocol: auto
+  fallback_nominal_voltage: 230V  # European standard (IEC 60038) for better international compatibility
+  simulation_mode: ${simulation_mode}
+
+# Note: Status LED has been moved to a separate package for better modularity
+# To enable automatic LED status indication, include the ups_status_led package:
+#
+# packages:
+#   status_led: !include ups_status_led.yaml
+#
+# This provides automatic LED control with night mode, Home Assistant integration,
+# and smart pattern management - no manual automation needed!
+
+# Essential text sensors
+text_sensor:
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "UPS Status"
+    id: ups_status_text
+    type: status
+    
+  - platform: ups_hid
+    ups_hid_id: ups_monitor
+    name: "Detected Protocol"
+    id: ups_protocol
+    type: protocol
