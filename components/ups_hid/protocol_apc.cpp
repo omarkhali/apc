@@ -603,7 +603,7 @@ void ApcReportParser::parse_apc_status_report(const HidReport &report, UpsData &
   if (apc_charging) {
     data.battery.status = battery_status::CHARGING;
   } else if (apc_discharging) {
-    data.battery.status = battery_status::ON_BATTERY;
+    data.battery.status = status::ON_BATTERY;
   } else if (apc_ac_present) {
     // AC present, battery not charging/discharging -> online/idle
     data.battery.status = battery_status::GOOD;
